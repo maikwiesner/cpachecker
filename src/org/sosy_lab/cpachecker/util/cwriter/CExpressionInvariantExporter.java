@@ -49,6 +49,10 @@ public class CExpressionInvariantExporter {
       + "exporting [may be very expensive].")
   private boolean simplify = false;
 
+  @Option(secure = true, description = "Write invariants for given lines to additional file."
+      + "Empty list (\"[]\" means all lines are exported")
+  private String exportPlainForLines = null;
+
   private final PathTemplate prefix;
 
   private final FormulaManagerView fmgr;
@@ -106,7 +110,13 @@ public class CExpressionInvariantExporter {
       while ((line = reader.readLine()) != null) {
         Optional<String> invariant = getInvariantForLine(lineNo, reporting);
         if (invariant.isPresent()) {
-          out.append("__VERIFIER_assume(").append(invariant.orElseThrow()).append(");\n");
+          String invStr = invariant.orElseThrow();
+          out.append("__VERIFIER_assume(").append(invStr).append(");\n");
+
+          //check if invariant should be also exported raw
+          if (exportAsPlain(lineNo)) {
+              exportPlainInvariantForLine(lineNo, invStr);
+          }
         }
         out.append(line)
             .append('\n');
@@ -157,5 +167,19 @@ public class CExpressionInvariantExporter {
   private BooleanFormula simplifyInvariant(BooleanFormula pInvariant)
       throws InterruptedException, SolverException {
     return inductiveWeakeningManager.removeRedundancies(pInvariant);
+  }
+
+  /**
+   * specifies if invariant for given line should be additionally exported
+   * @param line source code line
+   * @return true iff invariant for line should be exported, false otherwise
+   */
+  private boolean exportAsPlain(int line) {
+    return exportPlainForLines != null;
+  }
+
+  private void exportPlainInvariantForLine(int line, String invariant) {
+    //for now just print invariant to console
+    System.out.println("line = " + line + ", inv = " + invariant.replaceAll("\n", " "));
   }
 }
