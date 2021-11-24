@@ -56,7 +56,7 @@ public class CExpressionInvariantExporter {
   private boolean simplify = false;
 
   @Option(secure = true, description = "Write invariants for given lines to additional file."
-      + "Empty list (\"[]\" means all lines are exported")
+      + "Empty list (\"[]\") means all lines are exported")
 
   private String exportPlainForLines = null;
   private Set<Integer> plainInvLineNumbers;
