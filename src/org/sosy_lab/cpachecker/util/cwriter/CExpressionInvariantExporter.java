@@ -168,6 +168,14 @@ public class CExpressionInvariantExporter {
     String line;
     try (BufferedReader reader = Files.newBufferedReader(filename)) {
       while ((line = reader.readLine()) != null) {
+
+        //look for main function header
+        //TODO: find better implementation for this. What if there is no main function?
+        if (line.contains("main(")) {
+          out.append("extern void __VERIFIER_assume(int expression);\n");
+          out.append("//void __VERIFIER_assume(int expression) { if (!expression) { LOOP: goto LOOP; }; return; }\n\n");
+        }
+
         Optional<String> invariant = getInvariantForLine(lineNo, reporting);
         if (invariant.isPresent()) {
           String invStr = invariant.orElseThrow();
@@ -243,7 +251,7 @@ public class CExpressionInvariantExporter {
   }
 
   private void exportPlainInvariantForLine(int line, String invariant) throws IOException {
-    //for now just print invariant to console
+
     StringBuilder sb = new StringBuilder("[");
     sb.append(line);
     sb.append(",");
