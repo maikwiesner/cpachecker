@@ -12,7 +12,6 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import java.io.BufferedReader;
-import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -20,6 +19,7 @@ import java.io.Writer;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
@@ -62,12 +62,24 @@ public class CExpressionInvariantExporter {
   private Set<Integer> plainInvLineNumbers;
   private boolean allLines;
 
+  private static final String BEFORE_TOKEN = "-";
+  private static final String AFTER_TOKEN = "+";
+  /**
+   * This map specifies for each line for which an invariant was computed its relative
+   * position to that line, i.e. whether the invariant holds before or after that line.
+   * The value string is always either {@link #BEFORE_TOKEN} or {@link #AFTER_TOKEN}
+   */
+  private Map<Integer, String> invariantPosMap;
+
   private final PathTemplate prefix;
 
   private final FormulaManagerView fmgr;
   private final BooleanFormulaManager bfmgr;
   private final FormulaToCExpressionConverter formulaToCExpressionConverter;
   private final InductiveWeakeningManager inductiveWeakeningManager;
+
+  /*TODO: maybe completely seperate generation of invariant file from this
+      and create an extra class for that */
 
   public CExpressionInvariantExporter(
       Configuration pConfiguration,
@@ -94,7 +106,7 @@ public class CExpressionInvariantExporter {
   }
 
   /**
-   * creates output file for exported invariants and initializes @see{plainInvLineNumbers}
+   * creates output file for exported invariants and initializes necessary fields
    *
    * @param pLogManager used for logging
    */
@@ -110,6 +122,11 @@ public class CExpressionInvariantExporter {
     }
 
     if (exportPlainForLines != null) {
+
+      //initialize map
+      invariantPosMap = new HashMap<>();
+
+      //parse #exportPlainForLines argument
       //check that first and last character are '[' and ']'
       if (exportPlainForLines.charAt(0) != '['
           || exportPlainForLines.charAt(exportPlainForLines.length() - 1) != ']') {
@@ -135,7 +152,6 @@ public class CExpressionInvariantExporter {
       }
     }
   }
-
 
 
   /**
@@ -221,24 +237,8 @@ public class CExpressionInvariantExporter {
           BooleanFormula reported = AbstractStates.extractReportedFormulas(fmgr, state);
           if (!bfmgr.isTrue(reported)) {
 
-            //check if invariant holds before or after location
-            if (loc.getNumLeavingEdges() > 0) {
-              CFAEdge outEdge = loc.getLeavingEdge(0);
-              FileLocation outLocation = outEdge.getFileLocation();
-              int outLine = outLocation.getStartingLineInOrigin();
-              int inLine = location.getStartingLineInOrigin();
-              if (inLine == outLine) {
-                System.out.println("before line " + inLine);
-              } else {
-                System.out.println("after line " + inLine);
-              }
-            } else {
-              int inLine = location.getStartingLineInOrigin();
-              System.out.println("after line " + inLine);
-            }
 
-            //TODO: store information about invariant location, i.e. before or after
-            // using map, for example
+            setRelativeInvariantPosition(loc, location.getStartingLineInOrigin());
 
             byState.put(location.getStartingLineInOrigin(), reported);
           }
@@ -248,6 +248,35 @@ public class CExpressionInvariantExporter {
     return Maps.transformValues(
         byState.asMap(), invariants -> bfmgr.or(invariants)
     );
+  }
+
+  /**
+   * This method adds an entry to {@link #invariantPosMap}, which specifies the relative location
+   * of the invariant to the line number of the node. This has to be done as in some cases the same
+   * source line spans over mutltiple CFA blocks, such that the source line number for an invariant
+   * can be ambiguous and the different blocks can not be differentiated anymore.
+   *
+   * @param node   CFA node of the state where invariant holds
+   * @param inLine starting line of an entry edge of #node, i.e.
+   *               #node.getEnteringEdge(0).getFileLocation().getStartingLineInOrigin();
+   */
+  private void setRelativeInvariantPosition(CFANode node, int inLine) {
+    //check if invariant holds before or after location
+    if (node.getNumLeavingEdges() > 0) {
+      CFAEdge outEdge = node.getLeavingEdge(0);
+      FileLocation outLocation = outEdge.getFileLocation();
+      int outLine = outLocation.getStartingLineInOrigin();
+      if (inLine == outLine) {
+        //invariant holds before #inLine
+        invariantPosMap.put(inLine, BEFORE_TOKEN);
+      } else {
+        //invariant holds after #inLine
+        invariantPosMap.put(inLine, AFTER_TOKEN);
+      }
+    } else {
+      //invariant holds after #inLine
+      invariantPosMap.put(inLine, AFTER_TOKEN);
+    }
   }
 
   private BooleanFormula simplifyInvariant(BooleanFormula pInvariant)
@@ -269,6 +298,14 @@ public class CExpressionInvariantExporter {
 
     StringBuilder sb = new StringBuilder("[");
     sb.append(line);
+
+    //append token for relative positioning of invariant
+    String token = invariantPosMap.get(line);
+    if (token == null) {
+      token = ""; //just add emptry string
+    }
+    sb.append(token);
+
     sb.append(",");
     sb.append(invariant.replaceAll("\n", " "));
     sb.append("]\n");
