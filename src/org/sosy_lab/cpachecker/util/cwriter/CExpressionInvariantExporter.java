@@ -186,6 +186,7 @@ public class CExpressionInvariantExporter {
         lineNo++;
       }
     }
+
   }
 
   private Optional<String> getInvariantForLine(int lineNo, Map<Integer, BooleanFormula> reporting)
@@ -219,6 +220,26 @@ public class CExpressionInvariantExporter {
         if (location.getFileName().equals(filename)) {
           BooleanFormula reported = AbstractStates.extractReportedFormulas(fmgr, state);
           if (!bfmgr.isTrue(reported)) {
+
+            //check if invariant holds before or after location
+            if (loc.getNumLeavingEdges() > 0) {
+              CFAEdge outEdge = loc.getLeavingEdge(0);
+              FileLocation outLocation = outEdge.getFileLocation();
+              int outLine = outLocation.getStartingLineInOrigin();
+              int inLine = location.getStartingLineInOrigin();
+              if (inLine == outLine) {
+                System.out.println("before line " + inLine);
+              } else {
+                System.out.println("after line " + inLine);
+              }
+            } else {
+              int inLine = location.getStartingLineInOrigin();
+              System.out.println("after line " + inLine);
+            }
+
+            //TODO: store information about invariant location, i.e. before or after
+            // using map, for example
+
             byState.put(location.getStartingLineInOrigin(), reported);
           }
         }
