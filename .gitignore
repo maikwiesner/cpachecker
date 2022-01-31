@@ -17,6 +17,7 @@ a.out
 /bin
 /build.properties
 /output
+/output*
 /Checkstyle.html
 /Checkstyle.xml
 /Checkstyle.Test.html
@@ -74,7 +75,7 @@ src/org/sosy_lab/cpachecker/cfa/ast/acsl/ACSLSymbols.java
 # /test/results/
 /test/results/*
 
-# /.idea/
+.idea/
 .idea/workspace.xml
 .idea/uiDesigner.xml
 .idea/dictionaries

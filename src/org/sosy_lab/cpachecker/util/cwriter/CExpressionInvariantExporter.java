@@ -12,13 +12,19 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import java.io.BufferedReader;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.io.Writer;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.logging.Level;
 import org.sosy_lab.common.ShutdownNotifier;
 import org.sosy_lab.common.configuration.Configuration;
 import org.sosy_lab.common.configuration.InvalidConfigurationException;
@@ -42,12 +48,28 @@ import org.sosy_lab.java_smt.api.BooleanFormula;
 import org.sosy_lab.java_smt.api.BooleanFormulaManager;
 import org.sosy_lab.java_smt.api.SolverException;
 
-@Options(prefix="cinvariants")
+@Options(prefix = "cinvariants")
 public class CExpressionInvariantExporter {
 
-  @Option(secure=true, description="Attempt to simplify the invariant before "
+  @Option(secure = true, description = "Attempt to simplify the invariant before "
       + "exporting [may be very expensive].")
   private boolean simplify = false;
+
+  @Option(secure = true, description = "Write invariants for given lines to additional file."
+      + "Empty list (\"[]\") means all lines are exported")
+
+  private String exportPlainForLines = null;
+  private Set<Integer> plainInvLineNumbers;
+  private boolean allLines;
+
+  private static final String BEFORE_TOKEN = "-";
+  private static final String AFTER_TOKEN = "+";
+  /**
+   * This map specifies for each line for which an invariant was computed its relative
+   * position to that line, i.e. whether the invariant holds before or after that line.
+   * The value string is always either {@link #BEFORE_TOKEN} or {@link #AFTER_TOKEN}
+   */
+  private Map<Integer, String> invariantPosMap;
 
   private final PathTemplate prefix;
 
@@ -55,6 +77,9 @@ public class CExpressionInvariantExporter {
   private final BooleanFormulaManager bfmgr;
   private final FormulaToCExpressionConverter formulaToCExpressionConverter;
   private final InductiveWeakeningManager inductiveWeakeningManager;
+
+  /*TODO: maybe completely seperate generation of invariant file from this
+      and create an extra class for that */
 
   public CExpressionInvariantExporter(
       Configuration pConfiguration,
@@ -72,7 +97,62 @@ public class CExpressionInvariantExporter {
     inductiveWeakeningManager =
         new InductiveWeakeningManager(
             new WeakeningOptions(pConfiguration), solver, pLogManager, pShutdownNotifier);
+
+    //initialize plain export of invariants if activated
+    if (exportPlainForLines != null) {
+      initPlainInvariantsExport(pLogManager);
+    }
+
   }
+
+  /**
+   * creates output file for exported invariants and initializes necessary fields
+   *
+   * @param pLogManager used for logging
+   */
+  private void initPlainInvariantsExport(LogManager pLogManager) {
+    try {
+    /* PrintWriter will create a new file or delete its contents if its already exists.
+     Either way an empty target file for plain invariants get created */
+      new PrintWriter(prefix.getPath("plain.txt").toString()).close();
+    } catch (FileNotFoundException e) {
+      pLogManager.log(Level.WARNING, "could not create file for plain invariants.");
+      //deactivate export of invariants as target file could not be created
+      exportPlainForLines = null;
+    }
+
+    if (exportPlainForLines != null) {
+
+      //initialize map
+      invariantPosMap = new HashMap<>();
+
+      //parse #exportPlainForLines argument
+      //check that first and last character are '[' and ']'
+      if (exportPlainForLines.charAt(0) != '['
+          || exportPlainForLines.charAt(exportPlainForLines.length() - 1) != ']') {
+        pLogManager.log(Level.WARNING, "invalid value for cinvariants.exportPlainForLines");
+      } else if (exportPlainForLines.equals("[]")) {
+        allLines = true;
+      } else {
+        allLines = false;
+        plainInvLineNumbers = new HashSet<>();
+
+        String lineNumberList =
+            exportPlainForLines.substring(1, exportPlainForLines.length() - 1);
+        String[] lineNumbers = lineNumberList.split(",");
+        for (String lineNumber : lineNumbers) {
+          try {
+            plainInvLineNumbers.add(Integer.parseInt(lineNumber));
+          } catch (NumberFormatException e) {
+            //print warning and ignore this value
+            pLogManager.log(Level.WARNING,
+                "could not parse line number " + lineNumber + ", skipping!");
+          }
+        }
+      }
+    }
+  }
+
 
   /**
    * Export invariants extracted from {@code pReachedSet} into the file specified by the options as
@@ -86,8 +166,8 @@ public class CExpressionInvariantExporter {
       Path trimmedFilename = program.getFileName();
       if (trimmedFilename != null) {
         try (Writer output =
-            IO.openOutputFile(
-                prefix.getPath(trimmedFilename.toString()), Charset.defaultCharset())) {
+                 IO.openOutputFile(
+                     prefix.getPath(trimmedFilename.toString()), Charset.defaultCharset())) {
           writeProgramWithInvariants(output, program, pReachedSet);
         }
       }
@@ -102,17 +182,27 @@ public class CExpressionInvariantExporter {
 
     int lineNo = 0;
     String line;
+    boolean foundMain = false;
     try (BufferedReader reader = Files.newBufferedReader(filename)) {
       while ((line = reader.readLine()) != null) {
+
         Optional<String> invariant = getInvariantForLine(lineNo, reporting);
         if (invariant.isPresent()) {
-          out.append("__VERIFIER_assume(").append(invariant.orElseThrow()).append(");\n");
+          String invStr = invariant.orElseThrow();
+          out.append("__VERIFIER_assume(").append(invStr).append(");\n");
+
+
+          //check if invariant should be also exported raw
+          if (exportAsPlain(lineNo)) {
+            exportPlainInvariantForLine(lineNo, invStr);
+          }
         }
         out.append(line)
             .append('\n');
         lineNo++;
       }
     }
+
   }
 
   private Optional<String> getInvariantForLine(int lineNo, Map<Integer, BooleanFormula> reporting)
@@ -127,7 +217,9 @@ public class CExpressionInvariantExporter {
     return Optional.of(formulaToCExpressionConverter.formulaToCExpression(formula));
   }
 
-  /** Return mapping from line numbers to states associated with the given line. */
+  /**
+   * Return mapping from line numbers to states associated with the given line.
+   */
   private Map<Integer, BooleanFormula> getInvariantsForFile(
       UnmodifiableReachedSet pReachedSet, Path filename) {
 
@@ -144,6 +236,10 @@ public class CExpressionInvariantExporter {
         if (location.getFileName().equals(filename)) {
           BooleanFormula reported = AbstractStates.extractReportedFormulas(fmgr, state);
           if (!bfmgr.isTrue(reported)) {
+
+
+            setRelativeInvariantPosition(loc, location.getStartingLineInOrigin());
+
             byState.put(location.getStartingLineInOrigin(), reported);
           }
         }
@@ -154,8 +250,66 @@ public class CExpressionInvariantExporter {
     );
   }
 
+  /**
+   * This method adds an entry to {@link #invariantPosMap}, which specifies the relative location
+   * of the invariant to the line number of the node. This has to be done as in some cases the same
+   * source line spans over mutltiple CFA blocks, such that the source line number for an invariant
+   * can be ambiguous and the different blocks can not be differentiated anymore.
+   *
+   * @param node   CFA node of the state where invariant holds
+   * @param inLine starting line of an entry edge of #node, i.e.
+   *               #node.getEnteringEdge(0).getFileLocation().getStartingLineInOrigin();
+   */
+  private void setRelativeInvariantPosition(CFANode node, int inLine) {
+    //check if invariant holds before or after location
+    if (node.getNumLeavingEdges() > 0) {
+      CFAEdge outEdge = node.getLeavingEdge(0);
+      FileLocation outLocation = outEdge.getFileLocation();
+      int outLine = outLocation.getStartingLineInOrigin();
+      if (inLine == outLine) {
+        //invariant holds before #inLine
+        invariantPosMap.put(inLine, BEFORE_TOKEN);
+      } else {
+        //invariant holds after #inLine
+        invariantPosMap.put(inLine, AFTER_TOKEN);
+      }
+    } else {
+      //invariant holds after #inLine
+      invariantPosMap.put(inLine, AFTER_TOKEN);
+    }
+  }
+
   private BooleanFormula simplifyInvariant(BooleanFormula pInvariant)
       throws InterruptedException, SolverException {
     return inductiveWeakeningManager.removeRedundancies(pInvariant);
+  }
+
+  /**
+   * specifies if invariant for given line should be additionally exported
+   *
+   * @param line source code line
+   * @return true iff invariant for line should be exported, false otherwise
+   */
+  private boolean exportAsPlain(int line) {
+    return allLines || plainInvLineNumbers.contains(line);
+  }
+
+  private void exportPlainInvariantForLine(int line, String invariant) throws IOException {
+
+    StringBuilder sb = new StringBuilder("[");
+    sb.append(line);
+
+    //append token for relative positioning of invariant
+    String token = invariantPosMap.get(line);
+    if (token == null) {
+      token = ""; //just add emptry string
+    }
+    sb.append(token);
+
+    sb.append(",");
+    sb.append(invariant.replaceAll("\n", " "));
+    sb.append("]\n");
+
+    IO.appendToFile(prefix.getPath("plain.txt"), Charset.defaultCharset(), sb.toString());
   }
 }
