@@ -143,12 +143,42 @@ public class CExpressionInvariantExporter {
         for (String lineNumber : lineNumbers) {
           //ingore leading and trailing whitespace
           String lineNumberTrimmed = lineNumber.trim();
-          try {
-            plainInvLineNumbers.add(Integer.parseInt(lineNumberTrimmed));
-          } catch (NumberFormatException e) {
-            //print warning and ignore this value
-            pLogManager.log(Level.WARNING,
-                "could not parse line number " + lineNumberTrimmed + ", skipping!");
+          if (lineNumberTrimmed.contains("-")) {
+            //this string describes an interval
+            String[] bounds = lineNumberTrimmed.split("-");
+            //there should be two values (lower and upper bound)
+            if (bounds.length != 2) {
+              //print warning and skip this string
+              pLogManager.log(Level.WARNING,
+                  "could not parse range " + lineNumberTrimmed + ", skipping!");
+              continue;
+            }
+
+            int lowerBound = 0;
+            int upperBound = 0;
+            try {
+              lowerBound = Integer.parseInt(bounds[0]);
+              upperBound = Integer.parseInt(bounds[1]);
+            } catch (NumberFormatException e) {
+              //print waring and skip this string
+              pLogManager.log(Level.WARNING,
+                  "could not parse range " + lineNumberTrimmed + ", skipping!");
+              continue;
+            }
+            //add each value of range to set
+            for (int value = lowerBound; value <= upperBound; value++) {
+              plainInvLineNumbers.add(value);
+            }
+
+          } else {
+            //add single value to set
+            try {
+              plainInvLineNumbers.add(Integer.parseInt(lineNumberTrimmed));
+            } catch (NumberFormatException e) {
+              //print warning and ignore this value
+              pLogManager.log(Level.WARNING,
+                  "could not parse line number " + lineNumberTrimmed + ", skipping!");
+            }
           }
         }
       }
