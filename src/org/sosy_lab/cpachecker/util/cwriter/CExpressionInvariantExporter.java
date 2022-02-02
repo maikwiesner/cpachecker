@@ -141,12 +141,14 @@ public class CExpressionInvariantExporter {
             exportPlainForLines.substring(1, exportPlainForLines.length() - 1);
         String[] lineNumbers = lineNumberList.split(",");
         for (String lineNumber : lineNumbers) {
+          //ingore leading and trailing whitespace
+          String lineNumberTrimmed = lineNumber.trim();
           try {
-            plainInvLineNumbers.add(Integer.parseInt(lineNumber));
+            plainInvLineNumbers.add(Integer.parseInt(lineNumberTrimmed));
           } catch (NumberFormatException e) {
             //print warning and ignore this value
             pLogManager.log(Level.WARNING,
-                "could not parse line number " + lineNumber + ", skipping!");
+                "could not parse line number " + lineNumberTrimmed + ", skipping!");
           }
         }
       }
@@ -182,7 +184,6 @@ public class CExpressionInvariantExporter {
 
     int lineNo = 0;
     String line;
-    boolean foundMain = false;
     try (BufferedReader reader = Files.newBufferedReader(filename)) {
       while ((line = reader.readLine()) != null) {
 
